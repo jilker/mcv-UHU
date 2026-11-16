@@ -1,0 +1,136 @@
+import sys
+
+import cv2
+import numpy as np
+
+
+# Devuelve (camera_matrix, dist_coeffs), o (None, None) si no se ha podido leer.
+def load_calibration(path):
+    fs = cv2.FileStorage(path, cv2.FILE_STORAGE_READ)
+    if not fs.isOpened():
+        return None, None
+    camera_matrix = fs.getNode("cameraMatrix").mat()
+    dist_coeffs = fs.getNode("distCoeffs").mat()
+    fs.release()
+    if camera_matrix is None or dist_coeffs is None:
+        return None, None
+    return camera_matrix, dist_coeffs
+
+
+# Lee un board (mapa de marcadores) de fichero: diccionario y, para cada marcador, su id y sus 4 esquinas
+# Devuelve el cv2.aruco.Board, o None si no se ha podido leer.
+def load_board(path):
+    fs = cv2.FileStorage(path, cv2.FILE_STORAGE_READ)
+    if not fs.isOpened():
+        return None
+    dictionary = cv2.aruco.getPredefinedDictionary(int(fs.getNode("dictionary").real()))
+    markers = fs.getNode("markers")
+    ids, obj_points = [], []
+    for i in range(markers.size()):
+        corners = markers.at(i).getNode("corners").mat()
+        if corners is None or corners.shape != (4, 3):
+            return None
+        ids.append(int(markers.at(i).getNode("id").real()))
+        obj_points.append(corners.astype(np.float32))
+    fs.release()
+    if not ids:
+        return None
+    return cv2.aruco.Board(obj_points, dictionary, np.array(ids, np.int32))
+
+
+# TODO 1: detectar los marcadores de la imagen
+# Devuelve (corners, ids).
+def detect_markers(detector, img):
+    # --- TO DO ---
+    # corners, ids, rejected = detector.detectMarkers(...)
+    return (), None
+
+
+# TODO 2: estimar la pose (rvec, tvec) del board respecto a la cámara.
+# Devuelve (used, rvec, tvec): used es el número de marcadores usados (0 si no se ha podido estimar).
+def estimate_board_pose(board, corners, ids, camera_matrix, dist_coeffs):
+    # --- TO DO ---
+    # object_points, image_points = board.matchImagePoints(...)
+    # Nota: empareja las esquinas detectadas con las esquinas 3D de esos marcadores en el board
+    # ok, rvec, tvec = cv2.solvePnP(...)
+    return 0, None, None
+
+
+# TODO 3: dibujar un cubo sobre el plano Z = 0 (y Z positiva)
+def draw_cube(img, camera_matrix, dist_coeffs, rvec, tvec, side):
+    # --- TO DO ---
+    vertices = np.zeros((0, 3), np.float32)     # los 8 vértices del cubo (array 8 x 3 float32)
+    edges = []                                  # las 12 aristas: pares de índices de vertices
+    # points_2d, _ = cv2.projectPoints(...)  # proyectar puntos sobre la imagen
+    # cv2.line(...)  # dibujar lineas del cubo
+    # Pista: 4 vértices en la base (Z = 0) y 4 en la tapa (Z = side). Las aristas son las 4 de la base, las 4 de la
+    # tapa y las 4 verticales que unen cada vértice de la base con el de la tapa que tiene encima
+    # Nota: cv2.line necesita los puntos como tuplas de enteros; antes, points_2d.reshape(-1, 2) quita la dimensión
+    # que añade cv2.projectPoints
+
+
+#### 1. LEEMOS PARAMETROS
+if len(sys.argv) != 4:
+    print("Usage: video_file|camera_index calibration_file board_file", file=sys.stderr)
+    sys.exit(-1)
+source = sys.argv[1]
+calibration_file = sys.argv[2]
+board_file = sys.argv[3]
+
+
+
+#### 2. LEEMOS LA CALIBRACION
+camera_matrix, dist_coeffs = load_calibration(calibration_file)
+if camera_matrix is None:
+    print(f"Cannot read {calibration_file}", file=sys.stderr)
+    sys.exit(-1)
+
+#### 3. LEEMOS EL BOARD
+board = load_board(board_file)
+if board is None:
+    print(f"Cannot read {board_file}", file=sys.stderr)
+    sys.exit(-1)
+# Lado de un marcador (el primero del mapa), para la longitud de los ejes y el lado del cubo
+first_marker = np.asarray(board.getObjPoints()[0]).reshape(4, 3)
+marker_length = np.linalg.norm(first_marker[1] - first_marker[0])
+
+#### 4. ABRIMOS EL VIDEO (O LA CAMARA, SI SE INDICA SU NUMERO)
+cap = cv2.VideoCapture(int(source) if source.isdigit() else source)
+if not cap.isOpened():
+    print(f"Cannot open {source}", file=sys.stderr)
+    sys.exit(-1)
+
+#### 5. CREAMOS EL DETECTOR DE MARCADORES
+detector = cv2.aruco.ArucoDetector(board.getDictionary())
+
+#### 6. PROCESAMOS CADA FRAME
+while True:
+    ok, frame = cap.read()
+    if not ok:
+        break
+
+    # Copia de la imagen para dibujar encima
+    canvas = frame.copy()
+
+    # 6.1 DETECTAMOS LOS MARCADORES
+    corners, ids = detect_markers(detector, frame)
+    if ids is not None and len(ids) > 0:
+        cv2.aruco.drawDetectedMarkers(canvas, corners, ids)
+
+    # 6.2 POSE DEL BOARD
+    used = 0
+    if ids is not None and len(ids) > 0:
+        used, rvec, tvec = estimate_board_pose(board, corners, ids, camera_matrix, dist_coeffs)
+    if used > 0:
+        cv2.drawFrameAxes(canvas, camera_matrix, dist_coeffs, rvec, tvec, 2 * marker_length)
+        draw_cube(canvas, camera_matrix, dist_coeffs, rvec, tvec, marker_length)
+
+    # 6.3 MOSTRAR IMAGEN
+    cv2.putText(canvas, "[space] pause   [ESC] exit", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    cv2.imshow("P2 board", canvas)
+    key = cv2.waitKey(30)
+    if key == 27:
+        break
+    if key == ord(" "):
+        cv2.waitKey(0)
+cv2.destroyAllWindows()
