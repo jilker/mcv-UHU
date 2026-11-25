@@ -6,3 +6,6 @@ __pycache__/
 # Images written by the programs
 check.png
 gray.png
+
+# 3D point clouds
+*.obj
